@@ -30,7 +30,7 @@
 #include <vulkan/vulkan.h>
 #endif
 
-#include "layers/vk_device_profile_api_layer.h"
+#include "layers/device_profile_api.h"
 
 #if defined(ANDROID) && defined(VALIDATION_APK)
 #include <android/log.h>
@@ -426,6 +426,21 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL myDbgFunc(VkFlags msgFlags, VkDebugReportO
     return VK_FALSE;
 }
 
+// Generates a function that prints the message below and matches any arbitrary
+// function signature. This function is the default behavior for custom device
+// profile functions when the layer isn't loaded.
+struct DeviceProfileNotEnabled {
+    template <class return_type, class... args>
+    static return_type func(args...) {
+        printf("Device profile is not enabled but a device profile function was called.\n");
+        printf("Add an EnableDeviceProfile() call to force this test to use device profile;\n");
+        printf(
+            "otherwise, check if the m_device_profile_api_layer flag is set before calling device profile"
+            "functions.\n");
+        assert(0);
+    }
+};
+
 class VkLayerTest : public VkRenderFramework {
    public:
     void VKTriangleTest(BsoFailSelect failCase);
@@ -436,6 +451,35 @@ class VkLayerTest : public VkRenderFramework {
               const VkCommandPoolCreateFlags flags = 0) {
         InitFramework(myDbgFunc, m_errorMonitor);
         InitState(features, features2, flags);
+    }
+
+    void InitFramework(PFN_vkDebugReportCallbackEXT dbgFunction, void *userData) {
+        VkRenderFramework::InitFramework(dbgFunction, userData);
+        if (m_device_profile_api_layer) {
+            fpvkSetPhysicalDeviceLimitsEXT =
+                (PFN_vkSetPhysicalDeviceLimitsEXT)vkGetInstanceProcAddr(instance(), "vkSetPhysicalDeviceLimitsEXT");
+            fpvkSetPhysicalDeviceFormatPropertiesEXT = (PFN_vkSetPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(
+                instance(), "vkSetPhysicalDeviceFormatPropertiesEXT");
+            fpvkSetPhysicalDeviceImageFormatPropertiesEXT = (PFN_vkSetPhysicalDeviceImageFormatPropertiesEXT)vkGetInstanceProcAddr(
+                instance(), "vkSetPhysicalDeviceImageFormatPropertiesEXT");
+            fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT =
+                (PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(
+                    instance(), "vkGetOriginalPhysicalDeviceFormatPropertiesEXT");
+        }
+    }
+
+    void InitState(VkPhysicalDeviceFeatures *features = nullptr, VkPhysicalDeviceFeatures2 *features2 = nullptr,
+                   const VkCommandPoolCreateFlags flags = 0) {
+        VkRenderFramework::InitState(features, features2, flags);
+        if (m_device_profile_api_layer) {
+            fpvkSetImageMemoryRequirementsEXT =
+                (PFN_vkSetImageMemoryRequirementsEXT)vkGetDeviceProcAddr(m_device->device(), "vkSetImageMemoryRequirementsEXT");
+        }
+    }
+
+    bool EnableDeviceProfileLayer() {
+        m_device_profile_api_layer = true;
+        return VkRenderFramework::EnableDeviceProfileLayer();
     }
 
    protected:
@@ -462,15 +506,18 @@ class VkLayerTest : public VkRenderFramework {
         m_instance_layer_names.push_back("VK_LAYER_LUNARG_parameter_validation");
         m_instance_layer_names.push_back("VK_LAYER_LUNARG_object_tracker");
         m_instance_layer_names.push_back("VK_LAYER_LUNARG_core_validation");
-        m_instance_layer_names.push_back("VK_LAYER_GOOGLE_unique_objects");
-        if (VkTestFramework::m_devsim_layer) {
+        if (m_device_profile_api_layer) {
+            assert(InstanceLayerSupported("VK_LAYER_LUNARG_device_profile_api"));
+            m_instance_layer_names.push_back("VK_LAYER_LUNARG_device_profile_api");
+        }
+        if (m_devsim_layer) {
             if (InstanceLayerSupported("VK_LAYER_LUNARG_device_simulation")) {
                 m_instance_layer_names.push_back("VK_LAYER_LUNARG_device_simulation");
             } else {
-                VkTestFramework::m_devsim_layer = false;
-                printf("             Did not find VK_LAYER_LUNARG_device_simulation layer so it will not be enabled.\n");
+                printf("The requested layer, VK_LAYER_LUNARG_device_simulation, is unsupported and will not be enabled.\n");
             }
         }
+        m_instance_layer_names.push_back("VK_LAYER_GOOGLE_unique_objects");
         if (m_enableWSI) {
             m_instance_extension_names.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
             m_device_extension_names.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -506,23 +553,12 @@ class VkLayerTest : public VkRenderFramework {
         m_errorMonitor = new ErrorMonitor;
     }
 
-    bool LoadDeviceProfileLayer(
-        PFN_vkSetPhysicalDeviceFormatPropertiesEXT &fpvkSetPhysicalDeviceFormatPropertiesEXT,
-        PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT &fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT) {
-        // Load required functions
-        fpvkSetPhysicalDeviceFormatPropertiesEXT =
-            (PFN_vkSetPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(instance(), "vkSetPhysicalDeviceFormatPropertiesEXT");
-        fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT =
-            (PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(
-                instance(), "vkGetOriginalPhysicalDeviceFormatPropertiesEXT");
-
-        if (!(fpvkSetPhysicalDeviceFormatPropertiesEXT) || !(fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-            printf("%s Can't find device_profile_api functions; skipped.\n", kSkipPrefix);
-            return 0;
-        }
-
-        return 1;
-    }
+    PFN_vkSetPhysicalDeviceLimitsEXT fpvkSetPhysicalDeviceLimitsEXT = DeviceProfileNotEnabled().func;
+    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT = DeviceProfileNotEnabled().func;
+    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT =
+        DeviceProfileNotEnabled().func;
+    PFN_vkSetPhysicalDeviceImageFormatPropertiesEXT fpvkSetPhysicalDeviceImageFormatPropertiesEXT = DeviceProfileNotEnabled().func;
+    PFN_vkSetImageMemoryRequirementsEXT fpvkSetImageMemoryRequirementsEXT = DeviceProfileNotEnabled().func;
 
     virtual void TearDown() {
         // Clean up resources before we reset
@@ -2832,6 +2868,14 @@ TEST_F(VkLayerTest, BindImageInvalidMemoryType) {
     err = vkCreateImage(m_device->device(), &image_create_info, NULL, &image);
     ASSERT_VK_SUCCESS(err);
 
+    if (m_device_profile_api_layer) {
+        // Set no memory type to support this image
+        VkMemoryRequirements image_requirements;
+        vkGetImageMemoryRequirements(m_device->device(), image, &image_requirements);
+        image_requirements.memoryTypeBits = 0;
+        fpvkSetImageMemoryRequirementsEXT(m_device->device(), image, image_requirements);
+    }
+
     vkGetImageMemoryRequirements(m_device->device(), image, &mem_reqs);
     mem_alloc.allocationSize = mem_reqs.size;
 
@@ -3280,34 +3324,30 @@ TEST_F(VkLayerTest, BindMemoryToDestroyedObject) {
 
 TEST_F(VkLayerTest, ExceedMemoryAllocationCount) {
     VkResult err = VK_SUCCESS;
-    const int max_mems = 32;
-    VkDeviceMemory mems[max_mems + 1];
-
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Failed to enable device profile layer.\n", kSkipPrefix);
-        return;
-    }
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
 
-    PFN_vkSetPhysicalDeviceLimitsEXT fpvkSetPhysicalDeviceLimitsEXT =
-        (PFN_vkSetPhysicalDeviceLimitsEXT)vkGetInstanceProcAddr(instance(), "vkSetPhysicalDeviceLimitsEXT");
-    PFN_vkGetOriginalPhysicalDeviceLimitsEXT fpvkGetOriginalPhysicalDeviceLimitsEXT =
-        (PFN_vkGetOriginalPhysicalDeviceLimitsEXT)vkGetInstanceProcAddr(instance(), "vkGetOriginalPhysicalDeviceLimitsEXT");
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(gpu(), &props);
 
-    if (!(fpvkSetPhysicalDeviceLimitsEXT) || !(fpvkGetOriginalPhysicalDeviceLimitsEXT)) {
-        printf("%s Can't find device_profile_api functions; skipped.\n", kSkipPrefix);
+    if (m_device_profile_api_layer) {
+        if (props.limits.maxMemoryAllocationCount > 32) {
+            props.limits.maxMemoryAllocationCount = 32;
+            fpvkSetPhysicalDeviceLimitsEXT(gpu(), &props.limits);
+        }
+    }
+
+    if (props.limits.maxMemoryAllocationCount > 100000) {
+        printf("%s Device's max memory allocation count is too large for this test.\n", kSkipPrefix);
         return;
     }
-    VkPhysicalDeviceProperties props;
-    fpvkGetOriginalPhysicalDeviceLimitsEXT(gpu(), &props.limits);
-    if (props.limits.maxMemoryAllocationCount > max_mems) {
-        props.limits.maxMemoryAllocationCount = max_mems;
-        fpvkSetPhysicalDeviceLimitsEXT(gpu(), &props.limits);
-    }
+
     ASSERT_NO_FATAL_FAILURE(InitState());
     m_errorMonitor->SetDesiredFailureMsg(VK_DEBUG_REPORT_ERROR_BIT_EXT,
                                          "Number of currently valid memory objects is not less than the maximum allowed");
+
+    const int max_allocations = props.limits.maxMemoryAllocationCount;
+    VkDeviceMemory mems[max_allocations + 1];
 
     VkMemoryAllocateInfo mem_alloc = {};
     mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -3315,17 +3355,18 @@ TEST_F(VkLayerTest, ExceedMemoryAllocationCount) {
     mem_alloc.memoryTypeIndex = 0;
     mem_alloc.allocationSize = 4;
 
-    int i;
-    for (i = 0; i <= max_mems; i++) {
+    int allocation_count;
+    for (int i = 0; i <= max_allocations; i++) {
         err = vkAllocateMemory(m_device->device(), &mem_alloc, NULL, &mems[i]);
         if (err != VK_SUCCESS) {
+            allocation_count = i;
             break;
         }
     }
     m_errorMonitor->VerifyFound();
 
-    for (int j = 0; j < i; j++) {
-        vkFreeMemory(m_device->device(), mems[j], NULL);
+    for (int i = 0; i < allocation_count; i++) {
+        vkFreeMemory(m_device->device(), mems[i], NULL);
     }
 }
 
@@ -3343,6 +3384,16 @@ TEST_F(VkLayerTest, CreatePipelineBadVertexAttributeFormat) {
 
     // Pick a really bad format for this purpose and make sure it should fail
     input_attribs.format = VK_FORMAT_BC2_UNORM_BLOCK;
+
+    // If we've enabled the device profile layer we can force this format to not
+    // support the vertex buffer bit.
+    if (m_device_profile_api_layer) {
+        VkFormatProperties properties;
+        vkGetPhysicalDeviceFormatProperties(gpu(), input_attribs.format, &properties);
+        properties.bufferFeatures &= ~VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
+        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), input_attribs.format, properties);
+    }
+
     VkFormatProperties format_props = m_device->format_properties(input_attribs.format);
     if ((format_props.bufferFeatures & VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT) != 0) {
         printf("%s Format unsuitable for test; skipped.\n", kSkipPrefix);
@@ -4039,6 +4090,14 @@ TEST_F(VkLayerTest, MiscBlitImageTests) {
     ASSERT_NO_FATAL_FAILURE(Init());
 
     VkFormat f_color = VK_FORMAT_R32_SFLOAT;  // Need features ..BLIT_SRC_BIT & ..BLIT_DST_BIT
+
+    if (m_device_profile_api_layer) {
+        // Set the VK_FORMAT_D32_SFLOAT format to not support BLIT_DST_BIT
+        VkFormatProperties depth_properties;
+        vkGetPhysicalDeviceFormatProperties(gpu(), f_depth, &depth_properties);
+        depth_properties.optimalTilingFeatures &= ~VK_FORMAT_FEATURE_BLIT_DST_BIT;
+        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), f_depth, depth_properties);
+    }
 
     if (!ImageFormatAndFeaturesSupported(gpu(), f_color, VK_IMAGE_TILING_OPTIMAL,
                                          VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
@@ -11675,8 +11734,6 @@ TEST_F(VkLayerTest, VUID_VkVertexInputAttributeDescription_offset_00622) {
         "Test VUID-VkVertexInputAttributeDescription-offset-00622: offset must be less than or equal to "
         "VkPhysicalDeviceLimits::maxVertexInputAttributeOffset");
 
-    EnableDeviceProfileLayer();
-
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
 
     uint32_t maxVertexInputAttributeOffset = 0;
@@ -11685,16 +11742,15 @@ TEST_F(VkLayerTest, VUID_VkVertexInputAttributeDescription_offset_00622) {
         vkGetPhysicalDeviceProperties(gpu(), &device_props);
         maxVertexInputAttributeOffset = device_props.limits.maxVertexInputAttributeOffset;
         if (maxVertexInputAttributeOffset == 0xFFFFFFFF) {
-            // Attempt to artificially lower maximum offset
-            PFN_vkSetPhysicalDeviceLimitsEXT fpvkSetPhysicalDeviceLimitsEXT =
-                (PFN_vkSetPhysicalDeviceLimitsEXT)vkGetInstanceProcAddr(instance(), "vkSetPhysicalDeviceLimitsEXT");
-            if (!fpvkSetPhysicalDeviceLimitsEXT) {
-                printf("%s All offsets are valid & device_profile_api not found; skipped.\n", kSkipPrefix);
+            if (m_device_profile_api_layer) {
+                // Attempt to artificially lower maximum offset
+                device_props.limits.maxVertexInputAttributeOffset = device_props.limits.maxVertexInputBindingStride - 2;
+                fpvkSetPhysicalDeviceLimitsEXT(gpu(), &device_props.limits);
+                maxVertexInputAttributeOffset = device_props.limits.maxVertexInputAttributeOffset;
+            } else {
+                printf("%s All offsets are valid and the device profile layer is not in use.\n", kSkipPrefix);
                 return;
             }
-            device_props.limits.maxVertexInputAttributeOffset = device_props.limits.maxVertexInputBindingStride - 2;
-            fpvkSetPhysicalDeviceLimitsEXT(gpu(), &device_props.limits);
-            maxVertexInputAttributeOffset = device_props.limits.maxVertexInputAttributeOffset;
         }
     }
     ASSERT_NO_FATAL_FAILURE(InitState());
@@ -16133,22 +16189,12 @@ TEST_F(VkLayerTest, CreateImageViewBreaksParameterCompatibilityRequirements) {
 TEST_F(VkLayerTest, CreateImageViewFormatFeatureMismatch) {
     TEST_DESCRIPTION("Create view with a format that does not have the same features as the image format.");
 
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Failed to enable device profile layer.\n", kSkipPrefix);
-        return;
-    }
+    // This test doesn't make sense to run without the device profile layer so
+    // we attempt to enable it regardless of test settings.
+    EnableDeviceProfileLayer();
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
     ASSERT_NO_FATAL_FAILURE(InitState());
-
-    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT = nullptr;
-    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT = nullptr;
-
-    // Load required functions
-    if (!LoadDeviceProfileLayer(fpvkSetPhysicalDeviceFormatPropertiesEXT, fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-        printf("%s Failed to device profile layer.\n", kSkipPrefix);
-        return;
-    }
 
     // List of features to be tested
     VkFormatFeatureFlagBits features[] = {VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT,
@@ -16296,10 +16342,9 @@ TEST_F(VkLayerTest, CreateImageViewFormatFeatureMismatch) {
 TEST_F(VkLayerTest, InvalidImageViewUsageCreateInfo) {
     TEST_DESCRIPTION("Usage modification via a chained VkImageViewUsageCreateInfo struct");
 
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Test requires DeviceProfileLayer, unavailable - skipped.\n", kSkipPrefix);
-        return;
-    }
+    // This test doesn't make sense to run without the device profile layer so
+    // we attempt to enable it regardless of test settings.
+    EnableDeviceProfileLayer();
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
     if (!DeviceExtensionSupported(gpu(), nullptr, VK_KHR_MAINTENANCE2_EXTENSION_NAME)) {
@@ -16308,15 +16353,6 @@ TEST_F(VkLayerTest, InvalidImageViewUsageCreateInfo) {
     }
     m_device_extension_names.push_back(VK_KHR_MAINTENANCE2_EXTENSION_NAME);
     ASSERT_NO_FATAL_FAILURE(InitState());
-
-    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT = nullptr;
-    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT = nullptr;
-
-    // Load required functions
-    if (!LoadDeviceProfileLayer(fpvkSetPhysicalDeviceFormatPropertiesEXT, fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-        printf("%s Required extensions are not avaiable.\n", kSkipPrefix);
-        return;
-    }
 
     VkFormatProperties formatProps;
 
@@ -19634,25 +19670,12 @@ TEST_F(VkLayerTest, ImageLayerUnsupportedFormat) {
 TEST_F(VkLayerTest, CreateImageViewFormatMismatchUnrelated) {
     TEST_DESCRIPTION("Create an image with a color format, then try to create a depth view of it");
 
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Failed to enable device profile layer.\n", kSkipPrefix);
-        return;
-    }
+    // This test doesn't make sense to run without the device profile layer so
+    // we attempt to enable it regardless of test settings.
+    EnableDeviceProfileLayer();
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
     ASSERT_NO_FATAL_FAILURE(InitState());
-
-    // Load required functions
-    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT =
-        (PFN_vkSetPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(instance(), "vkSetPhysicalDeviceFormatPropertiesEXT");
-    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT =
-        (PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT)vkGetInstanceProcAddr(instance(),
-                                                                                  "vkGetOriginalPhysicalDeviceFormatPropertiesEXT");
-
-    if (!(fpvkSetPhysicalDeviceFormatPropertiesEXT) || !(fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-        printf("%s Can't find device_profile_api functions; skipped.\n", kSkipPrefix);
-        return;
-    }
 
     auto depth_format = FindSupportedDepthStencilFormat(gpu());
     if (!depth_format) {
@@ -19692,22 +19715,12 @@ TEST_F(VkLayerTest, CreateImageViewFormatMismatchUnrelated) {
 TEST_F(VkLayerTest, CreateImageViewNoMutableFormatBit) {
     TEST_DESCRIPTION("Create an image view with a different format, when the image does not have MUTABLE_FORMAT bit");
 
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Couldn't enable device profile layer.\n", kSkipPrefix);
-        return;
-    }
+    // This test doesn't make sense to run without the device profile layer so
+    // we attempt to enable it regardless of test settings.
+    EnableDeviceProfileLayer();
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
     ASSERT_NO_FATAL_FAILURE(InitState());
-
-    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT = nullptr;
-    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT = nullptr;
-
-    // Load required functions
-    if (!LoadDeviceProfileLayer(fpvkSetPhysicalDeviceFormatPropertiesEXT, fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-        printf("%s Required extensions are not present.\n", kSkipPrefix);
-        return;
-    }
 
     VkImageObj image(m_device);
     image.Init(128, 128, 1, VK_FORMAT_B8G8R8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_TILING_OPTIMAL, 0);
@@ -21290,6 +21303,14 @@ TEST_F(VkLayerTest, CreateImageMaxLimitsViolation) {
         }
     }
 
+    if (m_device_profile_api_layer) {
+        VkImageFormatProperties properties;
+        vkGetPhysicalDeviceImageFormatProperties(gpu(), safe_image_ci.format, safe_image_ci.imageType, safe_image_ci.tiling,
+                                                 safe_image_ci.usage, safe_image_ci.flags, &properties);
+        properties.sampleCounts &= ~VK_SAMPLE_COUNT_64_BIT;
+        fpvkSetPhysicalDeviceImageFormatPropertiesEXT(gpu(), safe_image_ci.format, safe_image_ci.tiling, VK_SUCCESS, properties);
+    }
+
     {
         VkImageCreateInfo image_ci = safe_image_ci;
         bool found = FindFormatWithoutSamples(gpu(), image_ci);
@@ -21405,6 +21426,13 @@ TEST_F(VkLayerTest, CreateImageFormatSupportErrors) {
 
     VkPhysicalDeviceFeatures features{};
     ASSERT_NO_FATAL_FAILURE(Init(&features));
+
+    if (m_device_profile_api_layer) {
+        // Set VK_FORMAT_E5B9G9R9_UFLOAT_PACK32 format be hardcoded as unsupported
+        VkImageFormatProperties empty_properties;
+        fpvkSetPhysicalDeviceImageFormatPropertiesEXT(gpu(), VK_FORMAT_E5B9G9R9_UFLOAT_PACK32, VK_IMAGE_TILING_OPTIMAL,
+                                                      VK_ERROR_FORMAT_NOT_SUPPORTED, empty_properties);
+    }
 
     VkImage null_image;  // throwaway target for all the vkCreateImage
 
@@ -28820,10 +28848,9 @@ TEST_F(VkPositiveLayerTest, CreatePipeline64BitAttributesPositive) {
         "multiple locations.");
     m_errorMonitor->ExpectSuccess();
 
-    if (!EnableDeviceProfileLayer()) {
-        printf("%s Failed to enable device profile layer.\n", kSkipPrefix);
-        return;
-    }
+    // This test doesn't make sense to run without the device profile layer so
+    // we attempt to enable it regardless of test settings.
+    EnableDeviceProfileLayer();
 
     ASSERT_NO_FATAL_FAILURE(InitFramework(myDbgFunc, m_errorMonitor));
     ASSERT_NO_FATAL_FAILURE(InitState());
@@ -28833,14 +28860,7 @@ TEST_F(VkPositiveLayerTest, CreatePipeline64BitAttributesPositive) {
         printf("%s Device does not support 64bit vertex attributes; skipped.\n", kSkipPrefix);
         return;
     }
-    // Set 64bit format to support VTX Buffer feature
-    PFN_vkSetPhysicalDeviceFormatPropertiesEXT fpvkSetPhysicalDeviceFormatPropertiesEXT = nullptr;
-    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT = nullptr;
 
-    // Load required functions
-    if (!LoadDeviceProfileLayer(fpvkSetPhysicalDeviceFormatPropertiesEXT, fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT)) {
-        return;
-    }
     VkFormatProperties format_props;
     fpvkGetOriginalPhysicalDeviceFormatPropertiesEXT(gpu(), VK_FORMAT_R64G64B64A64_SFLOAT, &format_props);
     format_props.bufferFeatures |= VK_FORMAT_FEATURE_VERTEX_BUFFER_BIT;
