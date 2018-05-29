@@ -3891,8 +3891,26 @@ TEST_F(VkLayerTest, BlitImageOffsets) {
     m_commandBuffer->end();
 }
 
+class Mock {
+        public:
+        std::function<VkResult(VkPhysicalDevice, VkFormat, VkFormatProperties*)> GetPhysicalDeviceFormatProperties;
+};
+
+#define ARGS_GetPhysicalDeviceFormatProperties VkPhysicalDevice physicalDevice, VkFormat format, VkFormatProperties *pFormatProperties
+
+#define SET_CALL(function) m_Mock.function = [](ARGS_ ## function)
+
 TEST_F(VkLayerTest, MiscBlitImageTests) {
     ASSERT_NO_FATAL_FAILURE(Init());
+    Mock m_Mock;
+
+    SET_CALL(GetPhysicalDeviceFormatProperties){
+        mockGetPhysicalDeviceFormatProperties(physicalDevice, format, pFormatProperties);
+        if (format == VK_FORMAT_D32_SFLOAT) {
+            pFormatProperties->optimalTilingFeatures &= ~VK_FORMAT_FEATURE_BLIT_DST_BIT;
+        }
+        return VK_SUCCESS;
+    };
 
     VkFormat f_color = VK_FORMAT_R32_SFLOAT;  // Need features ..BLIT_SRC_BIT & ..BLIT_DST_BIT
     VkFormat f_depth = VK_FORMAT_D32_SFLOAT;  // Need feature ..BLIT_SRC_BIT but not ..BLIT_DST_BIT
