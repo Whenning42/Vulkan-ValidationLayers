@@ -26,4 +26,6 @@
 typedef struct VkLayerDeviceProfileApiDispatchTable_ {
     PFN_vkSetPhysicalDeviceLimitsEXT vkSetPhysicalDeviceLimitsEXT;
     PFN_vkGetOriginalPhysicalDeviceLimitsEXT vkGetOriginalPhysicalDeviceLimitsEXT;
+    PFN_vkSetPhysicalDeviceFormatPropertiesEXT vkSetPhysicalDeviceFormatPropertiesEXT;
+    PFN_vkGetOriginalPhysicalDeviceFormatPropertiesEXT vkGetOriginalPhysicalDeviceFormatPropertiesEXT;
 } VkLayerDeviceProfileApiDispatchTable;
