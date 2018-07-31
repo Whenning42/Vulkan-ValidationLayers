@@ -4092,11 +4092,11 @@ TEST_F(VkLayerTest, MiscBlitImageTests) {
     VkFormat f_color = VK_FORMAT_R32_SFLOAT;  // Need features ..BLIT_SRC_BIT & ..BLIT_DST_BIT
 
     if (m_device_profile_api_layer) {
-        // Set the VK_FORMAT_D32_SFLOAT format to not support BLIT_DST_BIT
-        VkFormatProperties depth_properties;
-        vkGetPhysicalDeviceFormatProperties(gpu(), f_depth, &depth_properties);
-        depth_properties.optimalTilingFeatures &= ~VK_FORMAT_FEATURE_BLIT_DST_BIT;
-        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), f_depth, depth_properties);
+        // Set the f_color format to support ..BLIT_SRC_BIT & ..BLIT_DST_BIT
+        VkFormatProperties format_properties;
+        vkGetPhysicalDeviceFormatProperties(gpu(), f_color, &format_properties);
+        format_properties.optimalTilingFeatures |= VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), f_color, format_properties);
     }
 
     if (!ImageFormatAndFeaturesSupported(gpu(), f_color, VK_IMAGE_TILING_OPTIMAL,
@@ -4261,8 +4261,16 @@ TEST_F(VkLayerTest, BlitToDepthImageTests) {
     ASSERT_NO_FATAL_FAILURE(Init());
 
     // Need feature ..BLIT_SRC_BIT but not ..BLIT_DST_BIT
-    // TODO: provide more choices here; supporting D32_SFLOAT as BLIT_DST isn't unheard of.
     VkFormat f_depth = VK_FORMAT_D32_SFLOAT;
+
+    if (m_device_profile_api_layer) {
+        // Set the f_depth format to support BLIT_SRC_BIT but not BLIT_DST_BIT, these may be guaranteed?
+        VkFormatProperties format_properties;
+        vkGetPhysicalDeviceFormatProperties(gpu(), f_depth, &format_properties);
+        format_properties.optimalTilingFeatures |= VK_FORMAT_FEATURE_BLIT_SRC_BIT;
+        format_properties.optimalTilingFeatures &= ~VK_FORMAT_FEATURE_BLIT_DST_BIT;
+        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), f_depth, format_properties);
+    }
 
     if (!ImageFormatAndFeaturesSupported(gpu(), f_depth, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_BLIT_SRC_BIT) ||
         ImageFormatAndFeaturesSupported(gpu(), f_depth, VK_IMAGE_TILING_OPTIMAL, VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
@@ -9629,12 +9637,21 @@ TEST_F(VkLayerTest, InvalidBufferViewCreateInfoEntries) {
                format_with_uniform_texel_support_string);
         return;
     }
+
+
+    if(m_device_profile_api_layer) {
+        vkGetPhysicalDeviceFormatProperties(gpu(), format_without_texel_support, &format_properties);
+        format_properties.bufferFeatures &= ~VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT;
+        format_properties.bufferFeatures &= ~VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
+        fpvkSetPhysicalDeviceFormatPropertiesEXT(gpu(), format_without_texel_support, format_properties);
+    }
+
     vkGetPhysicalDeviceFormatProperties(gpu(), format_without_texel_support, &format_properties);
     if ((format_properties.bufferFeatures & VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT) ||
         (format_properties.bufferFeatures & VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT)) {
         printf(
-            "%s Test requires %s to not support VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT nor "
-            "VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT\n",
+            "%s Test requires %s to not support VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT nor "
+            "VK_FORMAT_FEATURE_STORAGE_TEXEL_BUFFER_BIT\n",
             kSkipPrefix, format_without_texel_support_string);
         return;
     }

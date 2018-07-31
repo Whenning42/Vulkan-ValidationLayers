@@ -20,8 +20,8 @@
  *
  */
 
-#ifndef DEVICE_PROFILE_H_
-#define DEVICE_PROFILE_H_
+#ifndef DEVICE_PROFILE_API_H_
+#define DEVICE_PROFILE_API_H_
 
 #include <unordered_map>
 #include "vulkan/vulkan.h"
@@ -54,4 +54,4 @@ typedef void(VKAPI_PTR *PFN_vkSetImageMemoryRequirementsEXT)(VkDevice device, Vk
 }  // extern "C"
 #endif  // __cplusplus
 
-#endif  // DEVICE_PROFILE_H_
+#endif  // DEVICE_PROFILE_API_H_
